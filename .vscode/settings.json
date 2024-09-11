@@ -1,0 +1,20 @@
+{
+    "files.associations": {
+        "esp_log.h": "c",
+        "sdkconfig.h": "c",
+        "string.h": "c",
+        "inet.h": "c",
+        "netdb.h": "c",
+        "_locale.h": "c",
+        "db_protocol.h": "c",
+        "unistd.h": "c",
+        "esp_netif.h": "c",
+        "socket.h": "c",
+        "reent.h": "c",
+        "err.h": "c",
+        "errno.h": "c",
+        "cstdint": "cpp",
+        "esp_event.h": "c",
+        "cstdlib": "c"
+    }
+}

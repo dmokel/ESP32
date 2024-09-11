@@ -434,8 +434,11 @@ void app_main() {
     read_settings_nvs();
     esp_log_level_set("*", ESP_LOG_INFO);
     if (DB_WIFI_MODE == DB_WIFI_MODE_AP || DB_WIFI_MODE == DB_WIFI_MODE_AP_LR) {
+        // 以AP模式初始化WiFi
         init_wifi_apmode(DB_WIFI_MODE);
     } else {
+        // 以STA（client）模式初始化WiFi
+        // 如果初始化失败，则暂时地将WiFi初始化为AP模式，从而让用户能够连接上WiFi来修改配置信息
         if (init_wifi_clientmode() < 0) {
             ESP_LOGW(TAG, "Switching to failsafe: Enabling access point mode");
             // De-Init all Wi-Fi and enable the AP-Mode temporarily
@@ -444,6 +447,7 @@ void app_main() {
             ESP_ERROR_CHECK(esp_wifi_stop());
             strncpy((char *) DEFAULT_SSID, "Failsafe DroneBridge ESP32", sizeof(DEFAULT_SSID));
             strncpy((char *) DEFAULT_PWD, "dronebridge", sizeof(DEFAULT_PWD));
+            // 尝试重新以AP模式初始化WiFi
             init_wifi_apmode(DB_WIFI_MODE_AP);
         }
     }

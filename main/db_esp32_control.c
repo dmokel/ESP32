@@ -32,6 +32,7 @@
 #include "msp_ltm_serial.h"
 #include "db_protocol.h"
 #include "tcp_server.h"
+#include "tcp_client.h"
 #include "db_esp32_control.h"
 #include "main.h"
 
@@ -129,6 +130,10 @@ void send_to_all_clients(int tcp_clients[], struct udp_conn_list_t *n_udp_conn_l
     send_to_all_udp_clients(n_udp_conn_list, data, data_length);
 }
 
+void send_to_all_servers(const int tcp_servers[], uint8_t data[], uint data_length) {
+    send_to_all_tcp_servers(tcp_servers, data, data_length);
+}
+
 /**
  * Writes data from buffer to UART
  * @param data_buffer Payload to write to UART
@@ -189,7 +194,7 @@ void parse_msp_ltm(int tcp_clients[], struct udp_conn_list_t *udp_connection, ui
  * @param serial_buffer Buffer that gets filled with data and then sent via TCP and UDP
  * @param serial_read_bytes Number of bytes already read for the current packet
  */
-void parse_transparent(int tcp_clients[], struct udp_conn_list_t *udp_connection, uint8_t serial_buffer[],
+void parse_transparent(int tcp_clients[], int tcp_servers[], struct udp_conn_list_t *udp_connection, uint8_t serial_buffer[],
                        uint *serial_read_bytes) {
     uint16_t read;
     // read from UART directly into TCP & UDP send buffer
@@ -198,6 +203,7 @@ void parse_transparent(int tcp_clients[], struct udp_conn_list_t *udp_connection
         *serial_read_bytes += read; // set new buffer position
         if (*serial_read_bytes >= TRANSPARENT_BUF_SIZE) {
             send_to_all_clients(tcp_clients, udp_connection, serial_buffer, *serial_read_bytes);
+            send_to_all_servers(tcp_servers, serial_buffer, *serial_read_bytes);
             *serial_read_bytes = 0; // reset buffer position
         }
     }
@@ -325,6 +331,7 @@ void control_module_udp_tcp() {
         vTaskDelete(NULL);
     }
     int tcp_master_socket = open_tcp_server(app_port_proxy);
+    int tcp_client_socket = open_tcp_client();
 
     udp_conn_list->udp_socket = open_udp_socket();
     char udp_buffer[UDP_BUF_SIZE];
@@ -332,17 +339,25 @@ void control_module_udp_tcp() {
     socklen_t udp_socklen = sizeof(new_db_udp_client.udp_client);
 
     int tcp_clients[CONFIG_LWIP_MAX_ACTIVE_TCP];
+    int tcp_servers[CONFIG_LWIP_MAX_ACTIVE_TCP];
     for (int i = 0; i < CONFIG_LWIP_MAX_ACTIVE_TCP; i++) {
         tcp_clients[i] = -1;
+        tcp_servers[i] = -1;
     }
     if (tcp_master_socket == ESP_FAIL || uart_socket == ESP_FAIL) {
         ESP_LOGE(TAG, "Can not start control module: tcp socket: %i UART socket: %i", tcp_master_socket, uart_socket);
     }
     fcntl(tcp_master_socket, F_SETFL, O_NONBLOCK);
+    if (tcp_client_socket != ESP_FAIL) {
+        fcntl(tcp_client_socket, F_SETFL, O_NONBLOCK);
+        tcp_servers[0] = tcp_client_socket;
+    }
     uint read_transparent = 0;
     uint read_msp_ltm = 0;
     char tcp_client_buffer[TCP_BUFF_SIZ];
+    char tcp_server_buffer[TCP_BUFF_SIZ];
     memset(tcp_client_buffer, 0, TCP_BUFF_SIZ);
+    memset(tcp_server_buffer, 0, TCP_BUFF_SIZ);
     uint8_t msp_message_buffer[UART_BUF_SIZE];
     uint8_t serial_buffer[TRANSPARENT_BUF_SIZE];
     msp_ltm_port_t db_msp_ltm_port;
@@ -351,6 +366,13 @@ void control_module_udp_tcp() {
     ESP_LOGI(TAG, "Started control module");
     while (1) {
         handle_tcp_master(tcp_master_socket, tcp_clients);
+        // if (tcp_client_socket < 0) {
+        //     tcp_client_socket = open_tcp_client();
+        //     if (tcp_client_socket != ESP_FAIL) {
+        //         fcntl(tcp_client_socket, F_SETFL, O_NONBLOCK);
+        //         tcp_servers[0] = tcp_client_socket;
+        //     }
+        // }
         for (int i = 0; i < CONFIG_LWIP_MAX_ACTIVE_TCP; i++) {  // handle TCP clients
             if (tcp_clients[i] > 0) {
                 ssize_t recv_length = recv(tcp_clients[i], tcp_client_buffer, TCP_BUFF_SIZ, 0);
@@ -369,6 +391,13 @@ void control_module_udp_tcp() {
                     close(tcp_clients[i]);
                     num_connected_tcp_clients--;
                     tcp_clients[i] = -1;
+                }
+            }
+            if (tcp_servers[i]>0) {
+                ssize_t recv_length = recv(tcp_servers[i], tcp_server_buffer, TCP_BUFF_SIZ, 0);
+                if (recv_length > 0) {
+                    ESP_LOGD(TAG, "TCP Client: Received %i bytes", recv_length);
+                    write_to_uart(tcp_server_buffer, recv_length);
                 }
             }
         }
@@ -394,7 +423,7 @@ void control_module_udp_tcp() {
             case 3:
             case 4:
             case 5:
-                parse_transparent(tcp_clients, udp_conn_list, serial_buffer, &read_transparent);
+                parse_transparent(tcp_clients, tcp_servers, udp_conn_list, serial_buffer, &read_transparent);
                 break;
         }
         if (delay_timer_cnt == 9000) {
